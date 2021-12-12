@@ -1,3 +1,26 @@
+/*
+ *   Copyright (c) 2021 Brainstorm4266
+ *   All rights reserved.
+
+ *   Permission is hereby granted, free of charge, to any person obtaining a copy
+ *   of this software and associated documentation files (the "Software"), to deal
+ *   in the Software without restriction, including without limitation the rights
+ *   to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ *   copies of the Software, and to permit persons to whom the Software is
+ *   furnished to do so, subject to the following conditions:
+ 
+ *   The above copyright notice and this permission notice shall be included in all
+ *   copies or substantial portions of the Software.
+ 
+ *   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ *   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ *   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ *   AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ *   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ *   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ *   SOFTWARE.
+ */
+
 const net = require('net');
 
 const Session = require('./Session');
@@ -31,7 +54,7 @@ module.exports = function onConnectedClientHandling(clientSocket, bridgedConnect
     const {
         upstream, tcpOutgoingAddress,
         injectData, injectResponse,
-        auth, intercept, keys
+        auth, intercept, keys, onError
     } = options;
 
 
@@ -47,12 +70,50 @@ module.exports = function onConnectedClientHandling(clientSocket, bridgedConnect
     function onClose(err) {
         const thisTunnel = bridgedConnections[remoteID];
         if (err && err instanceof Error) {
-            //TODO handle more the errorCodes
+            //TODO: handle more the errorCodes
             switch (err.code) {
                 case ETIMEDOUT:
+                    var error_userread = TIMED_OUT+DOUBLE_CLRF
+                    if (isFunction(onError)) {
+                        if (!this.data) {
+                            var dat = onError(err, thisTunnel, error_userread, null, clientSocket)
+                            if (dat) {
+                                thisTunnel.clientResponseWrite(dat)
+                            } else {
+                                break
+                            }
+                        } else {
+                            var dat = onError(onError(err, thisTunnel, error_userread, this.data, clientSocket))
+                            if (dat) {
+                                thisTunnel.clientResponseWrite(dat)
+                            } else {
+                                break
+                            }
+                        }
+                        break
+                    }
                     thisTunnel.clientResponseWrite(TIMED_OUT + DOUBLE_CLRF);
                     break;
                 case ENOTFOUND:
+                    var error_userread = NOT_FOUND+DOUBLE_CLRF
+                    if (isFunction(onError)) {
+                        if (!this.data) {
+                            var dat = onError(err, thisTunnel, error_userread, null, clientSocket)
+                            if (dat) {
+                                thisTunnel.clientResponseWrite(dat)
+                            } else {
+                                break
+                            }
+                        } else {
+                            var dat = onError(onError(err, thisTunnel, error_userread, this.data, clientSocket))
+                            if (dat) {
+                                thisTunnel.clientResponseWrite(dat)
+                            } else {
+                                break
+                            }
+                        }
+                        break
+                    }
                     thisTunnel.clientResponseWrite(NOT_FOUND + DOUBLE_CLRF + HTTP_BODIES.NOT_FOUND);
                     break;
                 case EPIPE:
@@ -64,6 +125,25 @@ module.exports = function onConnectedClientHandling(clientSocket, bridgedConnect
                 default:
                     //log all unhandled errors
                     logger.error(remoteID, err);
+                    var error_userread = NOT_OK+DOUBLE_CLRF
+                    if (isFunction(onError)) {
+                        if (!this.data) {
+                            var dat = onError(err, thisTunnel, error_userread, null, clientSocket)
+                            if (dat) {
+                                thisTunnel.clientResponseWrite(dat)
+                            } else {
+                                break
+                            }
+                        } else {
+                            var dat = onError(onError(err, thisTunnel, error_userread, this.data, clientSocket))
+                            if (dat) {
+                                thisTunnel.clientResponseWrite(dat)
+                            } else {
+                                break
+                            }
+                        }
+                        break
+                    }
                     thisTunnel.clientResponseWrite(NOT_OK + DOUBLE_CLRF);
             }
         }
@@ -126,7 +206,6 @@ module.exports = function onConnectedClientHandling(clientSocket, bridgedConnect
         const initOpt = getConnectionOptions(false, upstreamHost);
 
         thisTunnel.setTunnelOpt(initOpt); //settings opt before callback
-
         const proxyToUse = usingUpstreamToProxy(upstream, {
             data,
             bridgedConnection: thisTunnel
@@ -149,8 +228,18 @@ module.exports = function onConnectedClientHandling(clientSocket, bridgedConnect
          * @param {Error} connectionError
          */
         function onTunnelHTTPConnectionOpen(connectionError) {
+            // console.log(data.toString())
+            // if (data.toString().includes('nexus.proxy')) {
+            //     console.log('nexus.proxy accessed');
+            //     //onDirectConnectionOpen(data);
+            // }
             if (connectionError) {
-                return onClose(connectionError);
+                if (isFunction(onError)) {
+                    console.log('using onError')
+                    return onError(connectionError, thisTunnel, data, onClose);
+                } else {
+                    return onClose(connectionError);
+                }
             }
 
             if (connectionOpt.credentials) {
@@ -172,7 +261,12 @@ module.exports = function onConnectedClientHandling(clientSocket, bridgedConnect
          */
         async function onTunnelHTTPSConnectionOpen(connectionError) {
             if (connectionError) {
-                return onClose(connectionError);
+                if (isFunction(onError)) {
+                    console.log('using onError')
+                    return onError(connectionError, thisTunnel, data, onClose);
+                } else {
+                    return onClose(connectionError);
+                }
             }
             if (connectionOpt.upstreamed) {
                 if (connectionOpt.credentials) {
@@ -193,14 +287,16 @@ module.exports = function onConnectedClientHandling(clientSocket, bridgedConnect
             }
         }
 
-        const callbackOnConnect = (isConnectMethod)
-            ? onTunnelHTTPSConnectionOpen
-            : onTunnelHTTPConnectionOpen;
+        // const callbackOnConnect = (isConnectMethod)
+        //     ? onTunnelHTTPSConnectionOpen
+        //     : onTunnelHTTPConnectionOpen;
 
         if (connectionOpt) {
             logger.log(remoteID, '=>', thisTunnel.getTunnelStats());
 
-            const responseSocket = net.createConnection(connectionOpt, callbackOnConnect);
+            const responseSocket = net.createConnection(connectionOpt, (isConnectMethod)
+            ? onTunnelHTTPSConnectionOpen
+            : onTunnelHTTPConnectionOpen);
 
             thisTunnel.setRequestSocket(responseSocket
                 .on(DATA, onDataFromUpstream)
@@ -237,12 +333,13 @@ module.exports = function onConnectedClientHandling(clientSocket, bridgedConnect
      */
     async function onDataFromClient(data) {
         const dataString = data.toString();
+        this.data = data
         const thisTunnel = bridgedConnections[remoteID];
 
         try {
             if (dataString && dataString.length > 0) {
                 const headers = parseHeaders(data);
-                const split = dataString.split(CLRF); //TODO make secure, split can be limited
+                const split = dataString.split(CLRF); //TODO: make secure, split can be limited
 
                 if (isFunction(auth)
                     && !thisTunnel.isAuthenticated()) {
@@ -280,7 +377,12 @@ module.exports = function onConnectedClientHandling(clientSocket, bridgedConnect
             }
         }
         catch (err) {
-            return onClose(err);
+            if (isFunction(onError)) {
+                console.log('using onError')
+                return onError(connectionError, thisTunnel, data, onClose);
+            } else {
+                return onClose(connectionError);
+            }
         }
     }
 
